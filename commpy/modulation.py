@@ -27,7 +27,7 @@ from itertools import product
 import matplotlib.pyplot as plt
 from numpy import arange, array, zeros, pi, cos, sin, sqrt, log2, argmin, \
     hstack, repeat, tile, dot, shape, concatenate, exp, sum, \
-    log, vectorize, empty, eye, kron, inf, full, abs, newaxis, minimum, clip, int8, block
+    log, vectorize, empty, eye, kron, inf, full, abs, newaxis, minimum, clip, int8, block, unique
 from numpy.fft import fft, ifft
 from numpy.linalg import qr, norm
 from numpy.random import random
@@ -554,8 +554,8 @@ def best_first_detector(y, h, constellation, stack_size, noise_var, demode, llr_
     return ((map_metric - counter_hyp_metric) * map_bit_vector).reshape(-1)
 
 
-def firefly(y, h, nb_iter=60, gamma=0.5, k=1):
-    """ MIMO Firefly Algorithm Detection. This detector is suitable for QPSK only.
+def firefly(y, h, constellation, nb_iter=20, gamma=0.5, k=1, noise_var=0., output_type='hard', demode=None):
+    """ MIMO Firefly Algorithm Detection. This detector is suitable for QAM.
 
         Reference: A. Datta et V. Bhatia, "A near maximum likelihood performance modified firefly algorithm for large
         MIMO detection", Swarm and Evolutionary Computation, vol. 44, p. 828‑839, 2019
@@ -567,6 +567,9 @@ def firefly(y, h, nb_iter=60, gamma=0.5, k=1):
 
         h : 2D ndarray
             Channel Matrix (shape: num_receive_antennas x num_transmit_antennas)
+
+        constellation : 1D ndarray of floats or complex
+            Constellation used to modulate the symbols
 
         nb_iter : positive integer
             Number of iterations.
@@ -580,15 +583,33 @@ def firefly(y, h, nb_iter=60, gamma=0.5, k=1):
             Exponent coefficient for computing the attractiveness.
             *Default* value is 1.
 
+        noise_var : positive float
+            Noise variance.
+            *Default* value is 0.
+
+        output_type : str
+            'hard': hard output i.e. output is a binary word
+            'soft': soft output i.e. output is a vector of Log-Likelihood Ratios.
+            *Default* value is 'hard'
+
+        demode : function with prototype binary_word = demode(point)
+            Function that provide the binary word corresponding to a symbol vector.
+
         Returns
         -------
-        x : 1D ndarray
+        x : 1D ndarray of constellation points or of Log-Likelihood Ratios.
             Detected vector (length: num_receive_antennas).
     """
 
+    # keep a copy of y and h because we need them for soft-output
+    H = h.copy()
+    Y = y.copy()
+
+    # transform channel matrix h, y and constellation as real matrix
     if isinstance(h[0, 0], complex):
         h = block([[h.real, -h.imag], [h.imag, h.real]])
         y = concatenate((y.real, y.imag))
+        constellation = array(unique(constellation.real))
         is_complex = True
     else:
         is_complex = False
@@ -596,12 +617,13 @@ def firefly(y, h, nb_iter=60, gamma=0.5, k=1):
     # number of transmit antennas & receive antennas
     nb_tx, nb_rx = h.shape
     N = nb_tx
+    cons = len(constellation)    # constellation size
 
     # allocate memory for vectors
     x = empty((nb_iter, N), dtype=int8)
 
-    # construction Euclidean distance list for the 2 cases
-    ud = empty((nb_iter, 2))
+    # construction Euclidean distance list for cases
+    ud = empty((nb_iter, cons))
 
     # QR decomposition
     q, r = qr(h)
@@ -610,36 +632,52 @@ def firefly(y, h, nb_iter=60, gamma=0.5, k=1):
     # allocate memory for E
     E = zeros(nb_iter)
 
+    # construction metric probability
+    p = zeros((nb_iter, cons))
+
     for i in range(N - 1, -1, -1):
         # compute the Euclidean distance (equ 16)
         sum_temp = sum(r[i, i + 1:] * x[:, i + 1:], axis=1)
 
         # make assumptions
-        ud[:, 0] = (yt[i] + r[i, i] - sum_temp) ** 2  # xi = -1
-        ud[:, 1] = (yt[i] - r[i, i] - sum_temp) ** 2  # xi = 1
+        for j in range(cons):
+            ud[:, j] = (yt[i] - r[i, i] * constellation[j]  - sum_temp) ** 2
 
         # compute attractiveness parameter (equ 17)
         beta = exp(-gamma * ud ** k)
 
         # Compute probability metric (equ 18)
-        p = beta[:, 0] / (beta[:, 0] + beta[:, 1])
+        for j in range(cons):
+            for l in range(nb_iter):
+                p[l, j] = beta[l, j] / sum(beta[l, :])
 
         # generate uniformly random variable called alpha
         alpha = random(nb_iter)
 
         # calculate xi value (equ 19)
-        x[p > alpha, i] = -1
-        x[p <= alpha, i] = 1
+        for l in range(nb_iter):
+            p_temp = 0.
+            for j in range(cons):
+                p_temp += p[l, j]
+                if p_temp > alpha[l] :
+                    x[l, i] = constellation[j]
+                    break
 
         # update E
         E += (yt[i] - r[i, i] * x[:, i] - sum_temp) ** 2
 
-    x_opt = x[E.argmin()]
+    if output_type == 'hard' :
+        x_opt = x[E.argmin()]
+        if is_complex:
+            return x_opt[: N // 2] + 1j * x_opt[N // 2 :]
+        else:
+            return x_opt
 
-    if is_complex:
-        return x_opt[:int(N / 2)] + 1j * x_opt[int(N / 2):]
+    elif output_type == 'soft':
+        X = x[:, : N // 2] + 1j * x[:, N // 2 :]
+        return max_log_approx(Y, H, noise_var, X.transpose(), demode)
     else:
-        return x_opt
+        raise ValueError('output_type must be "hard" or "soft"')
 
 
 def bit_lvl_repr(H, w):

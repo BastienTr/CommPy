@@ -22,16 +22,16 @@ def test_firefly():
     SNRs = arange(0, 13, 2)
 
     def FA20(y, h, constellation, t):
-        return QAM4.demodulate(firefly(y, h, 20), 'hard')
+        return QAM4.demodulate(firefly(y, h,constellation, 20), 'hard')
 
     def FA40(y, h, constellation, t):
-        return QAM4.demodulate(firefly(y, h, 40), 'hard')
+        return QAM4.demodulate(firefly(y, h, constellation,40), 'hard')
 
     def FA60(y, h, constellation, t):
-        return QAM4.demodulate(firefly(y, h, 60), 'hard')
+        return QAM4.demodulate(firefly(y, h, constellation,60), 'hard')
 
     def FA100(y, h, constellation, t):
-        return QAM4.demodulate(firefly(y, h, 100), 'hard')
+        return QAM4.demodulate(firefly(y, h, constellation,100), 'hard')
 
     receivers = FA20, FA40, FA60, FA100
     nb_it = '20', '40', '60', '100'
