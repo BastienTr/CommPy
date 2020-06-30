@@ -27,7 +27,7 @@ from itertools import product
 import matplotlib.pyplot as plt
 from numpy import arange, array, zeros, pi, cos, sin, sqrt, log2, argmin, \
     hstack, repeat, tile, dot, shape, concatenate, exp, sum, \
-    log, vectorize, empty, eye, kron, inf, full, abs, newaxis, minimum, clip, int8, block, unique
+    log, vectorize, empty, eye, kron, inf, full, abs, newaxis, minimum, clip, int8, block, unique, cumsum
 from numpy.fft import fft, ifft
 from numpy.linalg import qr, norm
 from numpy.random import random
@@ -617,13 +617,9 @@ def firefly(y, h, constellation, nb_iter=20, gamma=0.5, k=1, noise_var=0., outpu
     # number of transmit antennas & receive antennas
     nb_tx, nb_rx = h.shape
     N = nb_tx
-    cons = len(constellation)    # constellation size
 
     # allocate memory for vectors
     x = empty((nb_iter, N), dtype=int8)
-
-    # construction Euclidean distance list for cases
-    ud = empty((nb_iter, cons))
 
     # QR decomposition
     q, r = qr(h)
@@ -632,41 +628,30 @@ def firefly(y, h, constellation, nb_iter=20, gamma=0.5, k=1, noise_var=0., outpu
     # allocate memory for E
     E = zeros(nb_iter)
 
-    # construction metric probability
-    p = zeros((nb_iter, cons))
-
     for i in range(N - 1, -1, -1):
         # compute the Euclidean distance (equ 16)
         sum_temp = sum(r[i, i + 1:] * x[:, i + 1:], axis=1)
 
         # make assumptions
-        for j in range(cons):
-            ud[:, j] = (yt[i] - r[i, i] * constellation[j]  - sum_temp) ** 2
+        ud = (yt[i] - r[i, i] * constellation - sum_temp[:, None]) ** 2
 
         # compute attractiveness parameter (equ 17)
         beta = exp(-gamma * ud ** k)
 
-        # Compute probability metric (equ 18)
-        for j in range(cons):
-            for l in range(nb_iter):
-                p[l, j] = beta[l, j] / sum(beta[l, :])
+        # Compute cumulative distribution function (equ 18)
+        cdf = cumsum(beta / beta.sum(1)[:, None], 1)
 
         # generate uniformly random variable called alpha
         alpha = random(nb_iter)
 
         # calculate xi value (equ 19)
-        for l in range(nb_iter):
-            p_temp = 0.
-            for j in range(cons):
-                p_temp += p[l, j]
-                if p_temp > alpha[l] :
-                    x[l, i] = constellation[j]
-                    break
+        for it in range(nb_iter):
+            x[it, i] = constellation[cdf[it].searchsorted(alpha[it])]
 
         # update E
         E += (yt[i] - r[i, i] * x[:, i] - sum_temp) ** 2
 
-    if output_type == 'hard' :
+    if output_type == 'hard':
         x_opt = x[E.argmin()]
         if is_complex:
             return x_opt[: N // 2] + 1j * x_opt[N // 2 :]
